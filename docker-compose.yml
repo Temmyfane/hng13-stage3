@@ -5,15 +5,20 @@ services:
     image: nginx:alpine
     container_name: nginx_proxy
     ports:
-      - "8080:80"
+      - "8080:8080"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - nginx_logs:/var/log/nginx
+    environment:
+      - ACTIVE_POOL=${ACTIVE_POOL:-blue}
+      - BACKUP_POOL=${BACKUP_POOL:-green}
     depends_on:
       - app_blue
       - app_green
     networks:
       - app_network
     restart: unless-stopped
+    entrypoint: /bin/sh -c "envsubst '$${ACTIVE_POOL} $${BACKUP_POOL}' < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"
 
   app_blue:
     image: ${BLUE_IMAGE}
@@ -40,6 +45,29 @@ services:
     networks:
       - app_network
     restart: unless-stopped
+
+  # Log watcher service for monitoring and alerts
+  watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.watcher
+    container_name: log_watcher
+    volumes:
+      - nginx_logs:/var/log/nginx:ro
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - ERROR_RATE_THRESHOLD=${ERROR_RATE_THRESHOLD:-2.0}
+      - WINDOW_SIZE=${WINDOW_SIZE:-200}
+      - ALERT_COOLDOWN_SEC=${ALERT_COOLDOWN_SEC:-300}
+      - MAINTENANCE_MODE=${MAINTENANCE_MODE:-false}
+    depends_on:
+      - nginx
+    networks:
+      - app_network
+    restart: unless-stopped
+
+volumes:
+  nginx_logs:
 
 networks:
   app_network:
